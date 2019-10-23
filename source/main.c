@@ -7,8 +7,10 @@
  *	I acknowledge all content contained herein, excluding template or example
  *	code, is my own original work.
  */
+
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#define tmpA (~PINA & 0x01)
 
 volatile unsigned char TimerFlag = 0; // TimerISR() sets this to 1. C programmer should clear to 0.
 
@@ -65,7 +67,7 @@ void TimerSet(unsigned long M) {
 }
 
 unsigned char tmpB;
-enum States { START, INIT, NEXT_LED } state;
+enum States { START, INIT, NEXT_LED, STOP, STOP_RELEASE, WAIT_RESET, RESET } state;
 	
 void tick() {
 	
@@ -79,12 +81,31 @@ void tick() {
 			break;
 		
 		case NEXT_LED:
-			state = NEXT_LED;
+			if (tmpA) {state = STOP;}
+			else {state = NEXT_LED;}
+			break;
+			
+		case STOP:
+			state = STOP_RELEASE;
+			break;
+			
+		case STOP_RELEASE:
+			if (tmpA) {state = STOP_RELEASE;}
+			else {state = WAIT_RESET;}
+			break;
+			
+		case WAIT_RESET:
+			if (!tmpA) {state = WAIT_RESET;}
+			else {state = RESET;}
+			break;
+			
+		case RESET:
+			state = INIT;
 			break;
 			
 		default:
-			state = INIT;
-			break;
+			state = START;
+			break;	
 	}
 
 	switch (state) { // State Actions
@@ -100,25 +121,37 @@ void tick() {
 			else {tmpB = tmpB << 1;}
 			break;
 			
-		default:
+		case STOP:
 			break;
-			
+		
+		case STOP_RELEASE:
+			break;
+		
+		case WAIT_RESET:
+			break;
+		
+		case RESET:
+			break;
+		
+		default:
+			break;	
 	}
 				
 }
 
 int main(void) {
-	
+	DDRA = 0x00; // Set port A to input
+	PORTA = 0xFF; // Init port A to 1s	
 	DDRB = 0xFF; // Set port B to output 
 	PORTB = 0x00; // Init port B to 0s
-	TimerSet(1000);
+	TimerSet(300);
 	TimerOn();
 	state = START;
 	tmpB = 0x00;
 	while(1) {
 		tick();
 		PORTB = tmpB;
-		while (!TimerFlag);	// Wait 1 sec
+		while (!TimerFlag);	// Wait 300 ms
 		TimerFlag = 0;
 	}
 }

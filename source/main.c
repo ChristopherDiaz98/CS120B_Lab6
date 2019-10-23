@@ -10,7 +10,6 @@
 
 #include <avr/io.h>
 #include <avr/interrupt.h>
-#define tmpA (~PINA & 0x01)
 
 volatile unsigned char TimerFlag = 0; // TimerISR() sets this to 1. C programmer should clear to 0.
 
@@ -66,43 +65,85 @@ void TimerSet(unsigned long M) {
 	_avr_timer_cntcurr = _avr_timer_M;
 }
 
+unsigned char tmpA;
 unsigned char tmpB;
-enum States { START, INIT, NEXT_LED, STOP, STOP_RELEASE, WAIT_RESET, RESET } state;
-	
+unsigned char cnt;
+enum States {START, WAIT, INCREMENT, DECREMENT, INC_HOLD, DEC_HOLD, RELEASE, RESET} state;	
 void tick() {
 	
+	tmpB = 0xFF & PORTB;
+	tmpA = 0xFF & ~PINA;
+
 	switch (state) { // State Transitions
 		case START:
-			state = INIT;
+			state = WAIT;
+			break;
+
+		case WAIT:
+			if ((tmpB < 0x09) && (tmpA == 0x01)) {state = INCREMENT;}
+			else if ((tmpB > 0x00) && (tmpA == 0x02)) {state = DECREMENT;}
+			else if (tmpA == 0x03) {state = RESET;}
+			else {state = WAIT;}
+			break;
+
+		case INCREMENT:
+			if (tmpA == 0x03) {state = RESET;}
+			else {state = RELEASE;}
+			break;
+
+		case DECREMENT:
+			if (tmpA == 0x03) {state = RESET;}
+			else {state = RELEASE;}
 			break;
 			
-		case INIT:
-			state = NEXT_LED;
-			break;
-		
-		case NEXT_LED:
-			if (tmpA) {state = STOP;}
-			else {state = NEXT_LED;}
-			break;
-			
-		case STOP:
-			state = STOP_RELEASE;
-			break;
-			
-		case STOP_RELEASE:
-			if (tmpA) {state = STOP_RELEASE;}
-			else {state = WAIT_RESET;}
+		case INC_HOLD:
+			if ( (tmpA == 0x01) && (tmpB < 0x09) ) {
+				if (cnt < 10) { // Wait 1 sec
+					state = INC_HOLD;
+				}
+				else {
+					state = INCREMENT;
+				}
+			}
+			else if (tmpA == 0x03) {state = RESET;}
+			else {state = WAIT;}
 			break;
 			
-		case WAIT_RESET:
-			if (!tmpA) {state = WAIT_RESET;}
-			else {state = RESET;}
+		case DEC_HOLD:
+			if ( (tmpA == 0x02) && (tmpB > 0x00) ) {
+				if (cnt < 10) { // Wait 1 sec
+					state = DEC_HOLD;
+				}
+				else {
+					state = DECREMENT;
+				}
+			}
+			else if (tmpA == 0x03) {state = RESET;}
+			else {state = WAIT;}
 			break;
-			
+
 		case RESET:
-			state = INIT;
+			state = WAIT;
 			break;
-			
+
+		case RELEASE:
+			if (tmpA == 0x00) {
+				state = WAIT;
+			}
+			else if (tmpA == 0x03) {
+				state = RESET;
+			}
+			else if ((tmpA == 0x01 ) && (tmpB < 0x09)) { 
+				state = INC_HOLD;
+			}
+			else if ((tmpA == 0x02 ) && (tmpB > 0x00)) {
+				state = DEC_HOLD;
+			}
+			else {
+				state = WAIT;
+			}
+			break;
+
 		default:
 			state = START;
 			break;	
@@ -110,29 +151,36 @@ void tick() {
 
 	switch (state) { // State Actions
 		case START:
+			tmpB = 0x07;
+			break;
+		case WAIT:
+			break;
+		case INCREMENT:
+			tmpB = tmpB + 0x01;
+			++cnt;
+			break;
+		case DECREMENT:
+			tmpB = tmpB - 0x01;
+			++cnt;
 			break;
 			
-		case INIT:
-			tmpB = 0x01;
+		case INC_HOLD:
+			if (cnt < 10) {++cnt;}
+			else {cnt = 0x00;}
 			break;
 			
-		case NEXT_LED:
-			if (tmpB == 0x04) {tmpB = 0x01;}
-			else {tmpB = tmpB << 1;}
+		case DEC_HOLD:
+			if (cnt < 10) {++cnt;}
+			else {cnt = 0x00;}
 			break;
 			
-		case STOP:
+		case RELEASE:
 			break;
-		
-		case STOP_RELEASE:
-			break;
-		
-		case WAIT_RESET:
-			break;
-		
+			
 		case RESET:
+			tmpB = 0x00;
 			break;
-		
+			
 		default:
 			break;	
 	}
@@ -140,18 +188,21 @@ void tick() {
 }
 
 int main(void) {
-	DDRA = 0x00; // Set port A to input
-	PORTA = 0xFF; // Init port A to 1s	
-	DDRB = 0xFF; // Set port B to output 
-	PORTB = 0x00; // Init port B to 0s
-	TimerSet(300);
+	/* Insert DDR and PORT initializations */
+	DDRA = 0x00; PORTA = 0xFF;
+	DDRB = 0xFF; PORTB = 0x00;
+	TimerSet(100);
 	TimerOn();
-	state = START;
-	tmpB = 0x00;
-	while(1) {
+	state = WAIT;
+	PORTB = 0x07;
+	tmpB = 0xFF & PORTB;
+	cnt = 0x00;
+
+	while (1) {
 		tick();
 		PORTB = tmpB;
-		while (!TimerFlag);	// Wait 300 ms
+		while (!TimerFlag);	// Wait 100 ms
 		TimerFlag = 0;
 	}
+	return 1;
 }
